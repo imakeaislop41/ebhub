@@ -2501,71 +2501,32 @@ local GAME_CONFIGS = {
 		hub.button(carPage, "Flip Car")
 		hub.setupPage(carPage)
 
-		-- === DEALERSHIP TAB (Spawn Any Car) ===
-		local dealerPage = hub.addTab("Dealership", 4)
+		-- === GARAGE TAB (Quick switch between owned cars) ===
+		local garagePage = hub.addTab("Garage", 4)
+		hub.section(garagePage, "Owned Vehicles")
 
-		-- Build sorted catalog from vehicle configs
-		local VehiclesFolder = ReplicatedStorage.Configs.Vehicles
-		local catalog = {}
-		for _, v in VehiclesFolder:GetChildren() do
-			if v:IsA("ModuleScript") then
-				local ok, data = pcall(require, v)
-				if ok and data.Price then
-					table.insert(catalog, {id = v.Name, price = data.Price, year = data.Year or ""})
-				end
-			end
-		end
-		table.sort(catalog, function(a, b) return a.price < b.price end)
-
-		-- Group by price range
-		local ranges = {
-			{label = "Budget (< $25K)",     min = 0,        max = 25000},
-			{label = "Mid ($25K - $100K)",   min = 25000,    max = 100000},
-			{label = "High ($100K - $500K)", min = 100000,   max = 500000},
-			{label = "Super ($500K - $2M)",  min = 500000,   max = 2000000},
-			{label = "Hyper ($2M+)",         min = 2000000,  max = math.huge},
-		}
-
-		for _, range in ranges do
-			local carsInRange = {}
-			for _, car in catalog do
-				if car.price >= range.min and car.price < range.max then
-					table.insert(carsInRange, car)
-				end
-			end
-			if #carsInRange > 0 then
-				hub.section(dealerPage, range.label)
-				for _, car in carsInRange do
-					local label = car.id .. " ($" .. tostring(car.price) .. ")"
-					hub.button(dealerPage, label)
+		local function refreshGarage()
+			local Data = require(ReplicatedStorage.Modules.Shared.Data)
+			local pData = Data.Get(hub.player)
+			for uuid, vData in pairs(pData.Data.Vehicles) do
+				local label = vData.Name
+				if not hub.onButton[label] then
+					hub.button(garagePage, label)
 					hub.onButton[label] = function()
-						hub.notify("Dealership", "Purchasing " .. car.id .. "...", 2)
+						hub.notify("Garage", "Spawning " .. vData.Name .. "...", 2)
 						task.spawn(function()
 							pcall(function() Network.FireServer("DespawnCar") end)
-							task.wait(0.5)
-							Network.FireServer("PurchaseVehicle", car.id)
 							task.wait(1)
-							-- Find the UUID of the newly purchased car
-							local Data = require(ReplicatedStorage.Modules.Shared.Data)
-							local pData = Data.Get(hub.player)
-							local newUUID = nil
-							for uuid, vData in pairs(pData.Data.Vehicles) do
-								if vData.Name == car.id then
-									newUUID = uuid
-								end
-							end
-							if newUUID then
-								Network.FireServer("SpawnCar", newUUID)
-								hub.notify("Dealership", "Spawned " .. car.id, 3)
-							else
-								hub.notify("Dealership", "Purchased but couldn't find UUID", 3)
-							end
+							Network.FireServer("SpawnCar", uuid, false)
+							hub.notify("Garage", "Spawned " .. vData.Name, 3)
 						end)
 					end
 				end
 			end
 		end
-		hub.setupPage(dealerPage)
+		refreshGarage()
+
+		hub.setupPage(garagePage)
 
 		-- === TELEPORT TAB ===
 		local tpPage = hub.addTab("Teleports", 5)
