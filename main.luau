@@ -2304,7 +2304,311 @@ local GAME_CONFIGS = {
 		end
 	end,
 
+	-- Midnight Chasers: Highway Racing (Jacksonville)
+	[13822562292] = function(hub)
+		------------------------------------------------------------
+		-- Services
+		------------------------------------------------------------
+		local RunService = game:GetService("RunService")
+		local UserInputService = game:GetService("UserInputService")
+		local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+		------------------------------------------------------------
+		-- Network helper (extract real remote name mapping)
+		------------------------------------------------------------
+		local Network = require(ReplicatedStorage.Modules.Modules.Network)
+
+		------------------------------------------------------------
+		-- Teleport Locations
+		------------------------------------------------------------
+		local TELEPORTS = {
+			{"Dealership",      Vector3.new(4361, 5, 9198)},
+			{"Customization",   Vector3.new(4299, 7, 9279)},
+			{"Race J1",         Vector3.new(4505, 13, 9281)},
+			{"Race J2",         Vector3.new(3750, 13, 8514)},
+			{"Race J4",         Vector3.new(-445, 13, -214)},
+		}
+
+		------------------------------------------------------------
+		-- Car Speed Boost (AssemblyLinearVelocity — max speed target)
+		------------------------------------------------------------
+		local speedBoostActive = false
+		local speedBoostConn = nil
+		local targetMaxSpeed = 300   -- studs/s target max
+		local boostAccel = 0.15      -- how aggressively we push toward target (0-1 lerp)
+
+		local function getPlayerCar()
+			return workspace:FindFirstChild(hub.player.Name .. "'s Car")
+		end
+
+		local function startSpeedBoost()
+			if speedBoostConn then speedBoostConn:Disconnect() end
+			speedBoostConn = RunService.Stepped:Connect(function()
+				if not speedBoostActive then return end
+				local car = getPlayerCar()
+				if not car then return end
+				local seat = car:FindFirstChild("DriveSeat")
+				if not seat then return end
+				local look = seat.CFrame.LookVector
+				local vel = seat.AssemblyLinearVelocity
+				local forwardSpeed = vel:Dot(look)
+				if seat.Throttle == 1 then
+					if forwardSpeed < targetMaxSpeed then
+						-- Smoothly push toward target, not instant
+						local deficit = targetMaxSpeed - forwardSpeed
+						local push = math.min(deficit * boostAccel, deficit)
+						seat.AssemblyLinearVelocity = vel + look * push
+					end
+				elseif seat.Throttle == -1 then
+					local reverseSpeed = vel:Dot(-look)
+					if reverseSpeed < targetMaxSpeed * 0.4 then
+						local deficit = (targetMaxSpeed * 0.4) - reverseSpeed
+						local push = math.min(deficit * boostAccel, deficit)
+						seat.AssemblyLinearVelocity = vel - look * push
+					end
+				end
+			end)
+		end
+
+		local function stopSpeedBoost()
+			if speedBoostConn then speedBoostConn:Disconnect() speedBoostConn = nil end
+		end
+
+		------------------------------------------------------------
+		-- Car Noclip
+		------------------------------------------------------------
+		local carNoclipActive = false
+		local carNoclipConn = nil
+		local cachedCollisions = {}
+
+		local function startCarNoclip()
+			if carNoclipConn then carNoclipConn:Disconnect() end
+			carNoclipConn = RunService.Stepped:Connect(function()
+				if not carNoclipActive then return end
+				local car = getPlayerCar()
+				if not car then return end
+				for _, part in car:GetDescendants() do
+					if part:IsA("BasePart") then
+						if cachedCollisions[part] == nil then
+							cachedCollisions[part] = part.CanCollide
+						end
+						part.CanCollide = false
+					end
+				end
+			end)
+		end
+
+		local function stopCarNoclip()
+			if carNoclipConn then carNoclipConn:Disconnect() carNoclipConn = nil end
+			local car = getPlayerCar()
+			if car then
+				for part, orig in pairs(cachedCollisions) do
+					if part.Parent then part.CanCollide = orig end
+				end
+			end
+			cachedCollisions = {}
+		end
+
+		------------------------------------------------------------
+		-- Car Teleport (teleports the whole car)
+		------------------------------------------------------------
+		local function teleportCar(pos)
+			local car = getPlayerCar()
+			if car and car.PrimaryPart then
+				car:PivotTo(CFrame.new(pos + Vector3.new(0, 5, 0)))
+				hub.notify("Teleport", "Car teleported", 2)
+			else
+				-- Fallback: TP player on foot
+				local root = hub.getRootPart()
+				if root then
+					root.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+					hub.notify("Teleport", "Teleported (on foot)", 2)
+				end
+			end
+		end
+
+		------------------------------------------------------------
+		-- Fly animation (same system as Talent Show)
+		------------------------------------------------------------
+		local FALL_ANIM_ID = "rbxassetid://180436148"
+		local flyAnimTrack = nil
+
+		local function playFlyAnim()
+			local char = hub.player.Character
+			if not char then return end
+			local hum = char:FindFirstChildOfClass("Humanoid")
+			if not hum then return end
+			local anim = Instance.new("Animation")
+			anim.AnimationId = FALL_ANIM_ID
+			flyAnimTrack = hum:LoadAnimation(anim)
+			flyAnimTrack.Priority = Enum.AnimationPriority.Action
+			flyAnimTrack.Looped = true
+			flyAnimTrack:Play()
+		end
+
+		local function stopFlyAnim()
+			if flyAnimTrack then
+				flyAnimTrack:Stop()
+				flyAnimTrack:Destroy()
+				flyAnimTrack = nil
+			end
+		end
+
+		-- Hook into universal fly
+		local origFlyStart = hub.onToggle.Fly
+		hub.onToggle.Fly = function(on)
+			if origFlyStart then origFlyStart(on) end
+			if on then playFlyAnim() else stopFlyAnim() end
+		end
+
+		------------------------------------------------------------
+		-- Build tabs
+		------------------------------------------------------------
+
+		-- === PLAYER TAB ===
+		local playerPage = hub.addTab("Player", 2)
+		hub.section(playerPage, "Movement")
+		hub.toggle(playerPage, "Fly", "F")
+		hub.slider(playerPage, "Fly Speed", 10, 200, 50)
+		hub.toggle(playerPage, "Noclip", "V")
+		hub.slider(playerPage, "WalkSpeed", 16, 200, 16)
+		hub.slider(playerPage, "JumpPower", 50, 200, 50)
+		hub.toggle(playerPage, "Infinite Jump")
+		hub.toggle(playerPage, "Low Gravity")
+		hub.section(playerPage, "Utility")
+		hub.toggle(playerPage, "Anti AFK")
+		hub.toggle(playerPage, "Click Teleport")
+		hub.toggle(playerPage, "Fullbright")
+		hub.toggle(playerPage, "No Fog")
+		hub.slider(playerPage, "FOV", 30, 120, 70)
+		hub.section(playerPage, "Server")
+		hub.button(playerPage, "Teleport to Random Player")
+		hub.button(playerPage, "Rejoin")
+		hub.button(playerPage, "Server Hop")
+		hub.setupPage(playerPage)
+
+		-- === CAR TAB ===
+		local carPage = hub.addTab("Car", 3)
+		hub.section(carPage, "Speed")
+		hub.toggle(carPage, "Speed Boost", "G")
+		hub.slider(carPage, "Max Speed", 150, 1500, 300)
+		hub.slider(carPage, "Acceleration", 5, 50, 15)
+		hub.section(carPage, "Physics")
+		hub.toggle(carPage, "Car Noclip", "X")
+		hub.toggle(carPage, "No Drag")
+		hub.section(carPage, "Utility")
+		hub.button(carPage, "Despawn Car")
+		hub.button(carPage, "Flip Car")
+		hub.setupPage(carPage)
+
+		-- === TELEPORT TAB ===
+		local tpPage = hub.addTab("Teleports", 4)
+		hub.section(tpPage, "Locations")
+		for _, loc in TELEPORTS do
+			hub.button(tpPage, loc[1])
+			hub.onButton[loc[1]] = function()
+				teleportCar(loc[2])
+			end
+		end
+		hub.setupPage(tpPage)
+
+		------------------------------------------------------------
+		-- Wire up car features
+		------------------------------------------------------------
+		hub.onToggle["Speed Boost"] = function(on)
+			speedBoostActive = on
+			if on then
+				startSpeedBoost()
+				hub.notify("Speed Boost", "ON — Max: " .. targetMaxSpeed .. " studs/s", 2)
+			else
+				stopSpeedBoost()
+				hub.notify("Speed Boost", "OFF", 2)
+			end
+		end
+
+		hub.onSlider["Max Speed"] = function(value)
+			targetMaxSpeed = value
+			if speedBoostActive then
+				hub.notify("Speed Boost", "Max: " .. value .. " studs/s", 1)
+			end
+		end
+
+		hub.onSlider["Acceleration"] = function(value)
+			boostAccel = value / 100 -- slider 5-50 maps to 0.05-0.50
+			if speedBoostActive then
+				hub.notify("Speed Boost", "Accel: " .. value .. "%", 1)
+			end
+		end
+
+		hub.onToggle["Car Noclip"] = function(on)
+			carNoclipActive = on
+			if on then
+				startCarNoclip()
+				hub.notify("Car Noclip", "ON", 2)
+			else
+				stopCarNoclip()
+				hub.notify("Car Noclip", "OFF", 2)
+			end
+		end
+
+		-- No Drag: disable aerodynamic drag script
+		local noDragActive = false
+		local origAeroEnabled = true
+		hub.onToggle["No Drag"] = function(on)
+			noDragActive = on
+			local car = getPlayerCar()
+			if not car then hub.notify("No Drag", "Spawn a car first", 2) return end
+			local aero = car:FindFirstChild("A-Chassis Tune")
+				and car["A-Chassis Tune"]:FindFirstChild("A-Chassis Interface")
+				and car["A-Chassis Tune"]["A-Chassis Interface"]:FindFirstChild("Aerodynamics")
+			if aero then
+				if on then
+					origAeroEnabled = aero.Enabled
+					aero.Enabled = false
+					-- Zero out current drag forces
+					local body = car:FindFirstChild("Body")
+					if body then
+						for _, name in {"Drag", "DownforceF", "DownforceR"} do
+							local f = body:FindFirstChild(name)
+							if f then
+								local t = f:FindFirstChild("T")
+								if t and t:IsA("BodyThrust") then t.Force = Vector3.zero end
+							end
+						end
+					end
+					hub.notify("No Drag", "ON — drag & downforce removed", 2)
+				else
+					aero.Enabled = origAeroEnabled
+					hub.notify("No Drag", "OFF", 2)
+				end
+			else
+				hub.notify("No Drag", "No aero script found", 2)
+			end
+		end
+
+		hub.onButton["Despawn Car"] = function()
+			Network.FireServer("DespawnCar")
+			hub.notify("Car", "Despawned", 2)
+		end
+
+		hub.onButton["Flip Car"] = function()
+			local car = getPlayerCar()
+			if not car or not car.PrimaryPart then
+				hub.notify("Car", "No car found", 2)
+				return
+			end
+			local cf = car.PrimaryPart.CFrame
+			local pos = cf.Position + Vector3.new(0, 5, 0)
+			local look = cf.LookVector
+			car:PivotTo(CFrame.lookAt(pos, pos + look))
+			hub.notify("Car", "Flipped upright", 2)
+		end
+	end,
+
 }
+
+-- Midnight Chasers: alias all map PlaceIds to the same config
+GAME_CONFIGS[139048751758942] = GAME_CONFIGS[13822562292] -- Boneville Salt Flats
 
 -- Run the config for this game, if one exists
 local gameConfig = GAME_CONFIGS[game.PlaceId]
