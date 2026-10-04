@@ -1305,6 +1305,10 @@ local GAME_CONFIGS = {
 		local PlacePickUpSwap  = PlotRF:WaitForChild("PlacePickUpSwap")
 		local MaxUpgradeRemote = PlotRF:WaitForChild("MaxUpgrade")
 
+		local StatRF           = KnitServices:WaitForChild("StatUpgradeService"):WaitForChild("RF")
+		local ReachUpgrade     = StatRF:WaitForChild("Upgrade")
+		local RebirthRemote    = StatRF:WaitForChild("Rebirth")
+
 		------------------------------------------------------------
 		-- Rarity hierarchy
 		------------------------------------------------------------
@@ -1320,6 +1324,8 @@ local GAME_CONFIGS = {
 		local farmActive = false
 		local autoPlaceActive = true
 		local autoUpgradeActive = true
+		local autoCollectUpgradeActive = false
+		local autoRebirthActive = false
 		local farmDelay = 0.35
 		local farmZoneMin = 1
 		local farmZoneMax = 14
@@ -1718,6 +1724,66 @@ local GAME_CONFIGS = {
 		end
 
 		------------------------------------------------------------
+		-- Auto Collect + Upgrade loop (simple: collect cash → upgrade → repeat)
+		------------------------------------------------------------
+		local function autoCollectUpgradeLoop()
+			while autoCollectUpgradeActive do
+				collectAllCash()
+				task.wait(0.2)
+				local upgraded = upgradeAll()
+				if upgraded > 0 then
+					farmStats.upgraded += upgraded
+					print("[EB] ACU upgraded: " .. upgraded)
+				end
+				task.wait(1)
+			end
+		end
+
+		------------------------------------------------------------
+		-- Auto Rebirth loop (collect cash → upgrade reach → try rebirth → repeat)
+		------------------------------------------------------------
+		local function autoRebirthLoop()
+			while autoRebirthActive do
+				-- Collect cash from pods
+				collectAllCash()
+				task.wait(0.2)
+
+				-- Upgrade brainrot pods to increase income
+				upgradeAll()
+				task.wait(0.1)
+
+				-- Buy reach upgrades until out of cash
+				local reachBought = 0
+				for i = 1, 100 do
+					local ok, result = pcall(function()
+						return ReachUpgrade:InvokeServer("Reach_Distance", 10)
+					end)
+					if not ok or not result then break end
+					reachBought += 1
+					if i % 10 == 0 then task.wait() end
+				end
+
+				local reach = hub.player:GetAttribute("Reach_Distance") or 0
+				if reachBought > 0 then
+					print("[EB] Rebirth loop: bought " .. reachBought .. " reach upgrades, now at " .. reach)
+				end
+
+				-- Try rebirth
+				local ok, result = pcall(function()
+					return RebirthRemote:InvokeServer()
+				end)
+				if ok and result then
+					local rebirths = hub.player:GetAttribute("Rebirths") or 0
+					hub.notify("Rebirth!", "Rebirth #" .. rebirths .. " complete!", 4)
+					print("[EB] REBIRTH SUCCESS! Now at rebirth #" .. rebirths)
+					task.wait(2) -- let server settle after rebirth
+				else
+					task.wait(1.5) -- wait for more income before trying again
+				end
+			end
+		end
+
+		------------------------------------------------------------
 		-- Build UI
 		------------------------------------------------------------
 		local farm = hub.addTab("Farm", 5)
@@ -1725,6 +1791,9 @@ local GAME_CONFIGS = {
 		hub.toggle(farm, "Auto Farm", "G")
 		hub.toggle(farm, "Auto Place + Swap", nil, true)
 		hub.toggle(farm, "Auto Upgrade", nil, true)
+		hub.section(farm, "AFK Mode")
+		hub.toggle(farm, "Auto Collect + Upgrade", "H")
+		hub.toggle(farm, "Auto Rebirth", "J")
 		hub.slider(farm, "Farm Delay", 10, 100, 35, "ms")
 		hub.slider(farm, "Zone Min", 1, 15, 1)
 		hub.slider(farm, "Zone Max", 1, 14, 14)
@@ -1758,7 +1827,10 @@ local GAME_CONFIGS = {
 			local body = infoFrame and infoFrame:FindFirstChild("Body")
 			while farm.Parent do
 				if body then
-					local status = farmActive and '<font color="#7ddc5a">Farming</font>' or "Idle"
+					local status = autoRebirthActive and '<font color="#ff9e3d">Rebirthing</font>'
+						or autoCollectUpgradeActive and '<font color="#5aafdc">ACU</font>'
+						or farmActive and '<font color="#7ddc5a">Farming</font>'
+						or "Idle"
 					local emptyCount = #getEmptyPods()
 					local occupiedCount = #getOccupiedPods()
 					body.Text = '<font color="#7ddc5a">Status:</font> ' .. status ..
@@ -1768,7 +1840,9 @@ local GAME_CONFIGS = {
 						'  |  <font color="#7ddc5a">Cycles:</font> ' .. farmStats.cycles ..
 						'\n<font color="#7ddc5a">Rarity:</font> ' .. (RARITY_NAMES[minRarity] or "?") .. '+' ..
 						'  |  <font color="#7ddc5a">Pods:</font> ' .. occupiedCount .. '/' .. (occupiedCount + emptyCount) ..
-						'  |  <font color="#7ddc5a">Grab:</font> ' .. (hub.player:GetAttribute("GrabAmount") or 1)
+						'  |  <font color="#7ddc5a">Grab:</font> ' .. (hub.player:GetAttribute("GrabAmount") or 1) ..
+						'\n<font color="#ff9e3d">Rebirths:</font> ' .. (hub.player:GetAttribute("Rebirths") or 0) ..
+						'  |  <font color="#ff9e3d">Reach:</font> ' .. (hub.player:GetAttribute("Reach_Distance") or 0)
 				end
 				task.wait(0.5)
 			end
@@ -1791,6 +1865,53 @@ local GAME_CONFIGS = {
 		end
 		hub.onToggle["Auto Place + Swap"] = function(on) autoPlaceActive = on end
 		hub.onToggle["Auto Upgrade"] = function(on) autoUpgradeActive = on end
+
+		local acuRunning = false
+		hub.onToggle["Auto Collect + Upgrade"] = function(on)
+			autoCollectUpgradeActive = on
+			if on then
+				-- Kill the main farm loop
+				if farmActive then
+					farmActive = false
+					hub.notify("Auto Farm", "Disabled by ACU", 2)
+				end
+				hub.notify("Auto Collect + Upgrade", "Started", 2)
+				if not acuRunning then
+					acuRunning = true
+					task.spawn(function()
+						autoCollectUpgradeLoop()
+						acuRunning = false
+					end)
+				end
+			else
+				hub.notify("Auto Collect + Upgrade", "Stopped", 2)
+			end
+		end
+		local arRunning = false
+		hub.onToggle["Auto Rebirth"] = function(on)
+			autoRebirthActive = on
+			if on then
+				-- Kill farm and ACU — rebirth loop handles everything
+				if farmActive then
+					farmActive = false
+					hub.notify("Auto Farm", "Disabled by Auto Rebirth", 2)
+				end
+				if autoCollectUpgradeActive then
+					autoCollectUpgradeActive = false
+					hub.notify("ACU", "Disabled by Auto Rebirth", 2)
+				end
+				hub.notify("Auto Rebirth", "Started", 2)
+				if not arRunning then
+					arRunning = true
+					task.spawn(function()
+						autoRebirthLoop()
+						arRunning = false
+					end)
+				end
+			else
+				hub.notify("Auto Rebirth", "Stopped", 2)
+			end
+		end
 		hub.onToggle["Disable 3D Rendering"] = function(on)
 			setRendering(not on)
 			hub.notify("3D Rendering", on and "Disabled" or "Enabled", 2)
