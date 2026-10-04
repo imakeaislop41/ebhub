@@ -1779,14 +1779,20 @@ local GAME_CONFIGS = {
 				local levelsNeeded = math.ceil(deficit / 5)
 				if levelsNeeded > 0 then
 					local bought = 0
-					for i = 1, 1000 do
-						if not autoRebirthActive then break end
-						local ok, result = pcall(function()
-							return ReachUpgrade:InvokeServer("Reach_Distance", 10)
+					-- Nuke it — 20 parallel threads, 500 batches each, max amount per call
+					for t = 1, 20 do
+						task.spawn(function()
+							for i = 1, 500 do
+								if not autoRebirthActive then break end
+								local ok, result = pcall(function()
+									return ReachUpgrade:InvokeServer("Reach_Distance", 99)
+								end)
+								if not ok or not result then break end
+								bought += 99
+							end
 						end)
-						if not ok or not result then break end
-						bought += 10
 					end
+					task.wait(0.3)
 					if bought > 0 then
 						local _, newReach, newReq = getRebirthInfo()
 						print("[EB] Reach: " .. newReach .. "/" .. newReq .. " (bought " .. bought .. " levels)")
@@ -1815,6 +1821,7 @@ local GAME_CONFIGS = {
 		hub.section(farm, "AFK Mode")
 		hub.toggle(farm, "Auto Collect + Upgrade", "H")
 		hub.toggle(farm, "Auto Rebirth", "J")
+		hub.toggle(farm, "Anti AFK")
 		hub.slider(farm, "Farm Delay", 10, 100, 35, "ms")
 		hub.slider(farm, "Zone Min", 1, 15, 1)
 		hub.slider(farm, "Zone Max", 1, 14, 14)
@@ -1932,6 +1939,21 @@ local GAME_CONFIGS = {
 				end
 			else
 				hub.notify("Auto Rebirth", "Stopped", 2)
+			end
+		end
+		local antiAfkConn = nil
+		hub.onToggle["Anti AFK"] = function(on)
+			if on then
+				-- Kill the idle disconnect handler
+				local VirtualUser = game:GetService("VirtualUser")
+				antiAfkConn = hub.player.Idled:Connect(function()
+					VirtualUser:CaptureController()
+					VirtualUser:ClickButton2(Vector2.new())
+				end)
+				hub.notify("Anti AFK", "Enabled", 2)
+			else
+				if antiAfkConn then antiAfkConn:Disconnect(); antiAfkConn = nil end
+				hub.notify("Anti AFK", "Disabled", 2)
 			end
 		end
 		hub.onToggle["Disable 3D Rendering"] = function(on)
