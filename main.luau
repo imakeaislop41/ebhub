@@ -1740,46 +1740,67 @@ local GAME_CONFIGS = {
 		end
 
 		------------------------------------------------------------
-		-- Auto Rebirth loop (collect cash → upgrade reach → try rebirth → repeat)
+		-- Auto Rebirth loop (collect cash → upgrade reach → rebirth → repeat)
+		-- Formula: required reach = rebirths * 30 + 80, each upgrade = +5 reach
 		------------------------------------------------------------
+		local function getRebirthInfo()
+			local folder = hub.player:FindFirstChild("updateStatsFolder")
+			if not folder then return 0, 0, 999 end
+			local rebirths = folder:FindFirstChild("Rebirths") and folder.Rebirths.Value or 0
+			local reach = folder:FindFirstChild("Reach_Distance") and folder.Reach_Distance.Value or 0
+			local required = rebirths * 30 + 80
+			return rebirths, reach, required
+		end
+
 		local function autoRebirthLoop()
 			while autoRebirthActive do
+				local rebirths, reach, required = getRebirthInfo()
+
+				-- If we already have enough reach, rebirth immediately
+				if reach >= required then
+					local ok, result = pcall(function()
+						return RebirthRemote:InvokeServer()
+					end)
+					if ok and result then
+						rebirths = (hub.player:GetAttribute("Rebirths") or 0)
+						hub.notify("Rebirth!", "Rebirth #" .. rebirths .. " complete!", 4)
+						print("[EB] REBIRTH #" .. rebirths .. "!")
+						task.wait(2)
+						continue
+					end
+				end
+
 				-- Collect cash from pods
 				collectAllCash()
-				task.wait(0.2)
-
-				-- Upgrade brainrot pods to increase income
-				upgradeAll()
 				task.wait(0.1)
 
-				-- Buy reach upgrades until out of cash
-				local reachBought = 0
-				for i = 1, 100 do
-					local ok, result = pcall(function()
-						return ReachUpgrade:InvokeServer("Reach_Distance", 10)
-					end)
-					if not ok or not result then break end
-					reachBought += 1
-					if i % 10 == 0 then task.wait() end
+				-- Buy reach upgrades FIRST — this is the rebirth bottleneck
+				local deficit = required - reach
+				local levelsNeeded = math.ceil(deficit / 5)
+				if levelsNeeded > 0 then
+					local bought = 0
+					for i = 1, 1000 do
+						if not autoRebirthActive then break end
+						local ok, result = pcall(function()
+							return ReachUpgrade:InvokeServer("Reach_Distance", 10)
+						end)
+						if not ok or not result then break end
+						bought += 10
+					end
+					if bought > 0 then
+						local _, newReach, newReq = getRebirthInfo()
+						print("[EB] Reach: " .. newReach .. "/" .. newReq .. " (bought " .. bought .. " levels)")
+					end
 				end
 
-				local reach = hub.player:GetAttribute("Reach_Distance") or 0
-				if reachBought > 0 then
-					print("[EB] Rebirth loop: bought " .. reachBought .. " reach upgrades, now at " .. reach)
+				-- Upgrade brainrot pods with leftover cash (single pass, not exhaustive)
+				local pods = getOccupiedPods()
+				for _, pod in pods do
+					if not autoRebirthActive then break end
+					pcall(function() UpgradeRemote:InvokeServer(pod) end)
 				end
 
-				-- Try rebirth
-				local ok, result = pcall(function()
-					return RebirthRemote:InvokeServer()
-				end)
-				if ok and result then
-					local rebirths = hub.player:GetAttribute("Rebirths") or 0
-					hub.notify("Rebirth!", "Rebirth #" .. rebirths .. " complete!", 4)
-					print("[EB] REBIRTH SUCCESS! Now at rebirth #" .. rebirths)
-					task.wait(2) -- let server settle after rebirth
-				else
-					task.wait(1.5) -- wait for more income before trying again
-				end
+				task.wait(1)
 			end
 		end
 
@@ -1842,7 +1863,8 @@ local GAME_CONFIGS = {
 						'  |  <font color="#7ddc5a">Pods:</font> ' .. occupiedCount .. '/' .. (occupiedCount + emptyCount) ..
 						'  |  <font color="#7ddc5a">Grab:</font> ' .. (hub.player:GetAttribute("GrabAmount") or 1) ..
 						'\n<font color="#ff9e3d">Rebirths:</font> ' .. (hub.player:GetAttribute("Rebirths") or 0) ..
-						'  |  <font color="#ff9e3d">Reach:</font> ' .. (hub.player:GetAttribute("Reach_Distance") or 0)
+						'  |  <font color="#ff9e3d">Reach:</font> ' .. (hub.player:GetAttribute("Reach_Distance") or 0) ..
+						'/' .. ((hub.player:GetAttribute("Rebirths") or 0) * 30 + 80)
 				end
 				task.wait(0.5)
 			end
