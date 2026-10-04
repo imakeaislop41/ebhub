@@ -15,6 +15,7 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
 local OWNERS = { ebolacuh = true }
+local FRIENDS = { phoenixlcshifterv151 = true }
 
 ------------------------------------------------------------------
 -- Game Detection
@@ -1191,14 +1192,17 @@ end)
 -- Profile / stats
 ------------------------------------------------------------------
 local isOwner = OWNERS[string.lower(player.Name)] == true
+local isFriend = FRIENDS[string.lower(player.Name)] == true
 
 welcome.PlayerName.Text = player.DisplayName
-welcome.Badge.Text = isOwner and "OWNER" or "MEMBER"
+welcome.Badge.Text = isOwner and "OWNER" or isFriend and "FRIEND" or "MEMBER"
 if isOwner then
 	welcome.Badge.BackgroundColor3 = Color3.fromRGB(255, 190, 50)
+elseif isFriend then
+	welcome.Badge.BackgroundColor3 = Color3.fromRGB(90, 160, 255)
 end
 profile.PlayerName.Text = player.DisplayName
-profile.Rank.Text = isOwner and "Owner" or "Member"
+profile.Rank.Text = isOwner and "Owner" or isFriend and "Friend" or "Member"
 
 task.spawn(function()
 	local ok, image = pcall(function()
